@@ -4,5 +4,3 @@
 
 [![Interactive Dashboard](https://img.shields.io/badge/Live_Dashboard-Click_Here-brightgreen?style=for-the-badge&logo=googlechrome)](https://salonigupta1602-eng.github.io/UNSTOP_HACKATHON_OLIST-MARKETPLACE-ANALYSIS/Olist_PowerBI_Dashboard.html)
 
-> 🔗 **Live Interactive Dashboard:**  
-> Click [here to open the interactive dashboard](https://salonigupta1602-eng.github.io/UNSTOP_HACKATHON_OLIST-MARKETPLACE-ANALYSIS/Olist_PowerBI_Dashboard.html) directly in your browser.
