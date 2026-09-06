@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Olist Marketplace Analytics</title>
+<!--
+  DESIGN UPDATE LOG (documented in full in Olist_Analysis_Report.docx and
+  Olist_Analysis_Notebook.ipynb -> "Dashboard Design Updates" section):
+  1. Chart types diversified per tab instead of repeating one chart type:
+     bar+line combo, ordered vertical bar, horizontal bar (x3, ranking),
+     pie, doughnut, and a filled line/area chart.
+  2. ColorBrewer palette applied: BuPu for all chart series (RdPu #dd3497
+     for every page/section heading; PuRd #c994c7 for the sidebar
+     index/navigation). Charts sample only the 6 visibly-contrasting stops
+     of the 9-class BuPu ramp (#9ebcda, #8c96c6, #8c6bb1, #88419d, #810f7c,
+     #4d004b) via a smooth interpolation helper (bupuShade/bupuSet) --
+     the 3 lightest official stops (#f7fcfd, #e0ecf4, #bfd3e6) render as
+     near-white on this dashboard's white cards and were dropped so bars/
+     slices never disappear, while still keeping a full light-to-dark
+     gradient.
+  3. Page headings centered and set in uppercase.
+  4. A yellow dot now marks whichever index/nav item is currently open.
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root{
+    --navy:#0F1B2D;
+    --navy-2:#16233D;
+    --navy-3:#1E304F;
+    --bg:#F2F4F7;
+    --card:#FFFFFF;
+    --border:#E1E5EB;
+    --ink:#16233D;
+    --sub:#5B6B85;
+    --blue:#2E5EAA;
+    --blue-soft:#E7EEF9;
+    --red:#D64545;
+    --red-soft:#FBEAEA;
+    --green:#2FA36B;
+    --green-soft:#E7F5EE;
+    --amber:#C9821A;
+    --amber-soft:#FBF1E2;
+
+    /* ---- ColorBrewer palette (per design spec) ---- */
+    --bupu-1:#8c6bb1;   /* BuPu - light */
+    --bupu-2:#88419d;   /* BuPu - mid */
+    --bupu-3:#810f7c;   /* BuPu - dark */
+    --rdpu:#dd3497;     /* RdPu - headings */
+    --purd:#c994c7;     /* PuRd - index / nav */
+    --active-dot:#FFD400; /* yellow "currently open" indicator */
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'Inter',system-ui,sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    display:flex;
+    min-height:100vh;
+  }
+  .mono{font-family:'IBM Plex Mono',monospace;}
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    width:250px;
+    flex-shrink:0;
+    background:linear-gradient(180deg,var(--navy) 0%, var(--navy-2) 100%);
+    color:#DCE4F0;
+    padding:28px 18px;
+    position:fixed;
+    top:0; left:0; bottom:0;
+    overflow-y:auto;
+  }
+  .brand{
+    font-size:15px;
+    font-weight:700;
+    color:var(--purd);
+    letter-spacing:.4px;
+    margin-bottom:2px;
+    text-transform:uppercase;
+    text-align:center;
+  }
+  .brand-sub{
+    font-size:11.5px;
+    color:#8FA3C4;
+    margin-bottom:28px;
+    line-height:1.5;
+  }
+  nav.navlist{display:flex; flex-direction:column; gap:2px;}
+  .navlink{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 12px;
+    border-radius:6px;
+    font-size:13.5px;
+    font-weight:500;
+    color:#B7C4DA;
+    cursor:pointer;
+    border-left:3px solid transparent;
+    transition:background .12s ease, color .12s ease;
+  }
+  .navlink:hover{background:rgba(201,148,199,.10); color:#fff;}
+  .navlink.active{
+    background:rgba(201,148,199,.28);
+    color:#fff;
+    border-left:3px solid var(--purd);
+  }
+  .navlink .dot{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--purd); opacity:.55; flex-shrink:0;
+  }
+  /* Yellow dot = "this page is currently open" indicator (Index/nav) */
+  .navlink.active .dot{background:var(--active-dot); opacity:1; box-shadow:0 0 4px rgba(255,212,0,.7);}
+  .sidebar-foot{
+    margin-top:32px;
+    padding-top:16px;
+    border-top:1px solid rgba(255,255,255,.08);
+    font-size:11px;
+    color:#6F84A6;
+    line-height:1.6;
+  }
+
+  /* ---------- Main ---------- */
+  main{
+    margin-left:250px;
+    flex:1;
+    padding:30px 38px 60px;
+    max-width:1180px;
+  }
+  .tab{display:none;}
+  .tab.active{display:block; animation:fade .25s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);}}
+
+  .pagehead{margin-bottom:22px; text-align:center;}
+  .pagehead h1{
+    font-size:23px; font-weight:700; margin:0 0 4px;
+    letter-spacing:.4px;
+    color:var(--rdpu);
+    text-transform:uppercase;
+    text-align:center;
+  }
+  .pagehead p{
+    margin:0 auto; color:var(--sub); font-size:13.5px; max-width:760px; line-height:1.55;
+    text-align:center;
+  }
+
+  /* KPI cards */
+  .kpi-row{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(155px,1fr));
+    gap:12px;
+    margin-bottom:24px;
+  }
+  .kpi{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:14px 16px;
+  }
+  .kpi .label{font-size:11.5px; color:var(--sub); margin-bottom:6px; font-weight:500;}
+  .kpi .value{font-size:22px; font-weight:700; letter-spacing:-.3px;}
+  .kpi .value.red{color:var(--red);}
+  .kpi .value.green{color:var(--green);}
+  .kpi .sub{font-size:11px; color:var(--sub); margin-top:3px;}
+
+  /* Chart cards */
+  .grid2{display:grid; grid-template-columns:1.3fr 1fr; gap:16px;}
+  .grid-eq{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media (max-width:920px){ .grid2, .grid-eq{grid-template-columns:1fr;} }
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:18px 20px 14px;
+    margin-bottom:16px;
+  }
+  .card h3{
+    font-size:14px; font-weight:600; margin:0 0 2px;
+    color:var(--rdpu); text-transform:uppercase; letter-spacing:.3px;
+  }
+  .card .cardsub{font-size:12px; color:var(--sub); margin-bottom:12px;}
+  .chartwrap{position:relative; width:100%;}
+
+  .callout{
+    border-radius:8px;
+    padding:14px 16px;
+    font-size:13px;
+    line-height:1.6;
+    margin-bottom:16px;
+    border:1px solid transparent;
+  }
+  .callout.primary{background:var(--blue-soft); border-color:#C9DAF0; color:#1B3866;}
+  .callout.warn{background:var(--red-soft); border-color:#F1CBCB; color:#7A2626;}
+  .callout.good{background:var(--green-soft); border-color:#C7E7D6; color:#1C5F3F;}
+  .callout.neutral{background:#F1F2F5; border-color:var(--border); color:var(--sub);}
+  .callout b{color:inherit;}
+  .callout .tag{
+    display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.4px;
+    padding:2px 7px; border-radius:4px; margin-right:8px; vertical-align:1px;
+  }
+  .callout.primary .tag{background:var(--blue); color:#fff;}
+  .callout.warn .tag{background:var(--red); color:#fff;}
+  .callout.good .tag{background:var(--green); color:#fff;}
+
+  table.datatable{width:100%; border-collapse:collapse; font-size:12.5px;}
+  table.datatable th{
+    text-align:left; padding:8px 10px; background:#F6F7F9; color:var(--sub);
+    font-weight:600; border-bottom:1px solid var(--border); font-size:11.5px;
+  }
+  table.datatable td{padding:7px 10px; border-bottom:1px solid #EEF0F3;}
+  table.datatable tr:last-child td{border-bottom:none;}
+
+  /* Recommendations tab */
+  .rec-card{
+    background:var(--card); border:1px solid var(--border); border-radius:8px;
+    padding:16px 18px; margin-bottom:14px;
+  }
+  .rec-card .rec-head{display:flex; align-items:center; gap:10px; margin-bottom:8px;}
+  .rec-num{
+    width:26px; height:26px; border-radius:6px; background:var(--navy-2); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; flex-shrink:0;
+  }
+  .rec-head h4{margin:0; font-size:14.5px; font-weight:700; color:var(--rdpu); text-transform:uppercase; letter-spacing:.3px;}
+  .rec-badge{
+    font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:20px; margin-left:auto;
+  }
+  .rec-badge.primary{background:var(--red-soft); color:var(--red);}
+  .rec-badge.secondary{background:var(--amber-soft); color:var(--amber);}
+  .rec-badge.growth{background:var(--green-soft); color:var(--green);}
+  .rec-card ul{margin:6px 0 0 18px; padding:0; font-size:13px; line-height:1.65; color:#2B3A55;}
+
+  .footer-note{
+    margin-top:26px; font-size:11.5px; color:var(--sub); border-top:1px solid var(--border);
+    padding-top:14px; line-height:1.6;
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="brand">Olist Analytics</div>
+  <div class="brand-sub">Marketplace Performance &amp; Customer Satisfaction<br>Sep 2016 &ndash; Oct 2018 &middot; 99,441 orders</div>
+  <nav class="navlist" id="navlist">
+    <div class="navlink active" data-tab="overview"><span class="dot"></span>Overview</div>
+    <div class="navlink" data-tab="delivery"><span class="dot"></span>Delivery &amp; Satisfaction</div>
+    <div class="navlink" data-tab="geography"><span class="dot"></span>Seller &amp; Geographic Patterns</div>
+    <div class="navlink" data-tab="category"><span class="dot"></span>Category Performance</div>
+    <div class="navlink" data-tab="payments"><span class="dot"></span>Payment Behavior</div>
+    <div class="navlink" data-tab="rootcause"><span class="dot"></span>Root Cause Ranking</div>
+    <div class="navlink" data-tab="recs"><span class="dot"></span>Recommendations</div>
+  </nav>
+  <div class="sidebar-foot">
+    Brazilian E-Commerce Public Dataset by Olist.<br>Prepared for Operations &amp; CX Leadership.
+  </div>
+</div>
+
+<main>
+
+  <!-- ================= OVERVIEW ================= -->
+  <section class="tab active" id="tab-overview">
+    <div class="pagehead">
+      <h1>Marketplace Overview</h1>
+      <p>How the marketplace has performed over the available time period &mdash; order volume, revenue, and review scores, and whether they tell the same story.</p>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Total orders</div><div class="value mono">99,441</div><div class="sub">Sep 2016 &ndash; Oct 2018</div></div>
+      <div class="kpi"><div class="label">Delivered</div><div class="value mono">97.0%</div><div class="sub">96,478 of 99,441</div></div>
+      <div class="kpi"><div class="label">Total item revenue</div><div class="value mono">R$13.59M</div><div class="sub">across all orders</div></div>
+      <div class="kpi"><div class="label">Avg review score</div><div class="value mono">4.07<span style="font-size:13px;color:var(--sub);">/5</span></div><div class="sub">57.4% are 5&#9733;, 11.9% are 1&#9733;</div></div>
+      <div class="kpi"><div class="label">Late delivery rate</div><div class="value mono red">6.8%</div><div class="sub">of delivered orders</div></div>
+      <div class="kpi"><div class="label">Repeat customers</div><div class="value mono">3.1%</div><div class="sub">= 5.7% of revenue</div></div>
+    </div>
+
+    <div class="callout warn"><span class="tag">KEY FINDING</span>Order volume and satisfaction move in <b>opposite directions at peak demand</b>. Volume peaked in Nov 2017 (Black Friday, 7,544 orders) &mdash; the same month average review score fell to its lowest point (3.89), with a second dip in Feb&ndash;Mar 2018.</div>
+
+    <div class="card">
+      <h3>Monthly Orders vs. Average Review Score</h3>
+      <div class="cardsub">Jan 2017 &ndash; Aug 2018 (ramp-up and data-collection tail-off months excluded from this trend view)</div>
+      <div class="chartwrap" style="height:340px;"><canvas id="chartMonthly"></canvas></div>
+    </div>
+  </section>
+
+  <!-- ================= DELIVERY ================= -->
+  <section class="tab" id="tab-delivery">
+    <div class="pagehead">
+      <h1>Delivery Performance &amp; Customer Satisfaction</h1>
+      <p>How delivery timing relative to the estimated delivery date relates to review scores &mdash; and whether it holds across the platform.</p>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Avg review &mdash; on-time</div><div class="value mono green">4.28</div></div>
+      <div class="kpi"><div class="label">Avg review &mdash; late</div><div class="value mono red">2.26</div></div>
+      <div class="kpi"><div class="label">Correlation (delay vs review)</div><div class="value mono">&minus;0.27</div><div class="sub">strongest bivariate link in the dataset</div></div>
+      <div class="kpi"><div class="label">Orders analyzed</div><div class="value mono">96,478</div><div class="sub">delivered orders only</div></div>
+    </div>
+
+    <div class="callout warn"><span class="tag">PRIMARY DRIVER</span>A late delivery drops the average review score from <b>4.28 to 2.26</b> &mdash; a two-point swing on a five-point scale. This is the single strongest factor found anywhere in this analysis, and it holds regardless of category, region, or payment method.</div>
+
+    <div class="card">
+      <h3>Average Review Score by Delivery Timing</h3>
+      <div class="cardsub">Delivered orders bucketed by days early/late vs. the estimated delivery date</div>
+      <div class="chartwrap" style="height:320px;"><canvas id="chartDelay"></canvas></div>
+    </div>
+  </section>
+
+  <!-- ================= GEOGRAPHY ================= -->
+  <section class="tab" id="tab-geography">
+    <div class="pagehead">
+      <h1>Seller &amp; Geographic Patterns</h1>
+      <p>Sellers and customers are not evenly distributed across Brazil. How does that geographic mismatch relate to delivery performance and satisfaction?</p>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Sellers based in São Paulo</div><div class="value mono">59.7%</div></div>
+      <div class="kpi"><div class="label">Customers in São Paulo</div><div class="value mono">42.0%</div></div>
+      <div class="kpi"><div class="label">Cross-state shipments</div><div class="value mono">63.8%</div><div class="sub">of order line-items</div></div>
+      <div class="kpi"><div class="label">Freight premium, cross-state</div><div class="value mono red">+76%</div><div class="sub">R$23.69 vs R$13.46</div></div>
+    </div>
+
+    <div class="callout warn"><span class="tag">SECONDARY DRIVER</span>Sellers are far more concentrated in São Paulo than customers are, so most of Brazil is served by cross-state logistics. Cross-state shipments cost 76% more in freight, run ~2.4 days later, and score lower on reviews (4.03 vs 4.20).</div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Late Delivery Rate by Customer State</h3>
+        <div class="cardsub">Top 12 states, delivered orders only (n&ge;50) &mdash; states furthest from São Paulo rank worst</div>
+        <div class="chartwrap" style="height:380px;"><canvas id="chartStateLate"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Seller Concentration by State</h3>
+        <div class="cardsub">Share of all 3,095 sellers</div>
+        <div class="chartwrap" style="height:380px;"><canvas id="chartSellerState"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CATEGORY ================= -->
+  <section class="tab" id="tab-category">
+    <div class="pagehead">
+      <h1>Product Category Performance</h1>
+      <p>How order volume, price, and review scores differ across categories &mdash; and which categories are notably stronger or weaker than the platform average.</p>
+    </div>
+
+    <div class="callout warn"><span class="tag">SECONDARY DRIVER</span><b>office_furniture</b> is the worst-reviewed category with a meaningful order count (3.48★ on 1,273 orders) and carries an above-average late rate (7.9%). <b>bed_bath_table</b>, the single highest-volume category on the platform (9,417 orders), is also below the 4.07 platform average (3.87★). Bulkier, more fragile goods appear to compound delivery risk.</div>
+
+    <div class="card">
+      <h3>Category Review Score vs. Platform Average</h3>
+      <div class="cardsub">Top 15 categories by order volume &mdash; dashed line = platform average (4.07)</div>
+      <div class="chartwrap" style="height:440px;"><canvas id="chartCategory"></canvas></div>
+    </div>
+  </section>
+
+  <!-- ================= PAYMENTS ================= -->
+  <section class="tab" id="tab-payments">
+    <div class="pagehead">
+      <h1>Payment Behavior</h1>
+      <p>How payment type and installment choices relate to order value, and whether they connect to anything else in the customer's experience.</p>
+    </div>
+
+    <div class="callout good"><span class="tag">NOT A DRIVER</span>Installment count scales sensibly with order value (r&nbsp;=&nbsp;0.31) &mdash; customers finance bigger purchases, as expected. But payment method and installments show <b>almost no relationship with review score</b> (r&nbsp;=&nbsp;&minus;0.03). This is a secondary, largely cosmetic factor &mdash; not a lever for improving satisfaction.</div>
+
+    <div class="grid-eq">
+      <div class="card">
+        <h3>Payment Method Mix</h3>
+        <div class="cardsub">Primary payment method per order</div>
+        <div class="chartwrap" style="height:300px;"><canvas id="chartPayMix"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Order Value by Installment Count</h3>
+        <div class="cardsub">Average item price per order, by installments chosen</div>
+        <div class="chartwrap" style="height:300px;"><canvas id="chartInstallments"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Payment Type Detail</h3>
+      <table class="datatable">
+        <thead><tr><th>Payment type</th><th>Orders</th><th>Avg value</th><th>Avg installments</th><th>Avg review</th></tr></thead>
+        <tbody id="payTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= ROOT CAUSE ================= -->
+  <section class="tab" id="tab-rootcause">
+    <div class="pagehead">
+      <h1>Root Cause Ranking</h1>
+      <p>The most important factors associated with low review scores, ranked so primary drivers can be distinguished from secondary contributors. This is descriptive/associative &mdash; not proof of causation from observational data.</p>
+    </div>
+
+    <div class="callout neutral">
+      <b>Method:</b> a standardized logistic regression predicts the probability of a low review (&le;2&#9733;, baseline rate 13.2%) from nine order-level factors. Coefficients are on a common (standardized) scale, so bar length directly compares each factor's effect size.
+    </div>
+
+    <div class="card">
+      <h3>Standardized Effect on Probability of a Low Review</h3>
+      <div class="cardsub">Positive = increases risk of a low review. Ranked by magnitude.</div>
+      <div class="chartwrap" style="height:380px;"><canvas id="chartDrivers"></canvas></div>
+    </div>
+
+    <div class="grid-eq">
+      <div class="callout warn"><span class="tag">PRIMARY</span><b>Order delivered late</b> &mdash; by far the largest effect of any factor tested, consistent across every cut of the data (region, category, time period).</div>
+      <div class="callout neutral"><span class="tag">SECONDARY</span><b>Order complexity</b> (# items, # distinct sellers) and <b>cross-state shipping</b> &mdash; plausibly act by raising the <i>chance</i> of a late delivery, rather than being independent root causes.</div>
+    </div>
+  </section>
+
+  <!-- ================= RECOMMENDATIONS ================= -->
+  <section class="tab" id="tab-recs">
+    <div class="pagehead">
+      <h1>Recommendations</h1>
+      <p>What Olist should prioritize to improve the platform experience as it continues to scale, ranked by the strength of evidence behind each.</p>
+    </div>
+
+    <div class="rec-card">
+      <div class="rec-head"><div class="rec-num">1</div><h4>Protect delivery timing during demand peaks</h4><span class="rec-badge primary">Primary driver</span></div>
+      <ul>
+        <li>Build seasonal/promotional-period capacity plans with logistics partners ahead of known peaks (Nov/Black Friday is a clear strain point in the data).</li>
+        <li>Set more conservative estimated-delivery-date promises during high-volume periods and for high-risk regions/categories.</li>
+        <li>Monitor delay days as a leading indicator in near-real-time, not just review score after the fact.</li>
+      </ul>
+    </div>
+
+    <div class="rec-card">
+      <div class="rec-head"><div class="rec-num">2</div><h4>Reduce the cross-state logistics penalty</h4><span class="rec-badge secondary">Secondary, structural</span></div>
+      <ul>
+        <li>Recruit and onboard sellers in underserved regions (North/Northeast) to shorten shipping distances for the customers most affected.</li>
+        <li>Explore regional fulfillment/consolidation hubs outside São Paulo for the states with the highest late rates (AL, MA, SE, PI, CE).</li>
+      </ul>
+    </div>
+
+    <div class="rec-card">
+      <div class="rec-head"><div class="rec-num">3</div><h4>Target category-specific delivery risk</h4><span class="rec-badge secondary">Secondary, contributing</span></div>
+      <ul>
+        <li>Work with sellers in office_furniture and bed_bath_table on packaging and carrier-selection standards, since delivery risk &mdash; not price or listing quality &mdash; appears to drive their below-average reviews.</li>
+      </ul>
+    </div>
+
+    <div class="rec-card">
+      <div class="rec-head"><div class="rec-num">4</div><h4>Build a retention program</h4><span class="rec-badge growth">Growth opportunity</span></div>
+      <ul>
+        <li>Repeat-purchase rate (3.1%) is low for a marketplace; first-time and repeat customers report similar satisfaction, so the gap is in return behavior, not experience quality &mdash; a separate lever from the fixes above.</li>
+      </ul>
+    </div>
+
+    <div class="callout neutral" style="margin-top:18px;"><b>What NOT to prioritize:</b> payment method / installment options (no measurable link to satisfaction) and broad, category-agnostic pricing or listing-quality initiatives (not supported as satisfaction levers by this data).</div>
+
+    <div class="footer-note">
+      Source: Brazilian E-Commerce Public Dataset by Olist (Kaggle, CC BY-NC-SA). Analysis is associative, not causal — a well-evidenced case for what is likely driving outcomes, built from real, unlabeled operational data.
+    </div>
+  </section>
+
+</main>
+
+<script>
+const DATA = {"monthly": [{"order_month": "2017-01", "orders": 800, "revenue": 120312.87, "avg_review": 4.05}, {"order_month": "2017-02", "orders": 1780, "revenue": 247303.02, "avg_review": 4.0}, {"order_month": "2017-03", "orders": 2682, "revenue": 374344.3, "avg_review": 4.06}, {"order_month": "2017-04", "orders": 2404, "revenue": 359927.23, "avg_review": 4.03}, {"order_month": "2017-05", "orders": 3700, "revenue": 506071.14, "avg_review": 4.12}, {"order_month": "2017-06", "orders": 3245, "revenue": 433038.6, "avg_review": 4.13}, {"order_month": "2017-07", "orders": 4026, "revenue": 498031.48, "avg_review": 4.16}, {"order_month": "2017-08", "orders": 4331, "revenue": 573971.68, "avg_review": 4.23}, {"order_month": "2017-09", "orders": 4285, "revenue": 624401.69, "avg_review": 4.17}, {"order_month": "2017-10", "orders": 4631, "revenue": 664219.43, "avg_review": 4.11}, {"order_month": "2017-11", "orders": 7544, "revenue": 1010271.37, "avg_review": 3.89}, {"order_month": "2017-12", "orders": 5673, "revenue": 743914.17, "avg_review": 4.0}, {"order_month": "2018-01", "orders": 7269, "revenue": 950030.36, "avg_review": 4.02}, {"order_month": "2018-02", "orders": 6728, "revenue": 844178.71, "avg_review": 3.81}, {"order_month": "2018-03", "orders": 7211, "revenue": 983213.44, "avg_review": 3.73}, {"order_month": "2018-04", "orders": 6939, "revenue": 996647.75, "avg_review": 4.15}, {"order_month": "2018-05", "orders": 6873, "revenue": 996517.68, "avg_review": 4.18}, {"order_month": "2018-06", "orders": 6167, "revenue": 865124.31, "avg_review": 4.27}, {"order_month": "2018-07", "orders": 6292, "revenue": 895507.22, "avg_review": 4.25}, {"order_month": "2018-08", "orders": 6512, "revenue": 854686.33, "avg_review": 4.25}], "delay_bucket": [{"delay_bucket": ">14d early", "mean": 4.32, "count": 42065}, {"delay_bucket": "7-14d early", "mean": 4.29, "count": 34075}, {"delay_bucket": "0-7d early", "mean": 4.15, "count": 13796}, {"delay_bucket": "1-7d late", "mean": 2.7, "count": 3672}, {"delay_bucket": "7-14d late", "mean": 1.67, "count": 1478}, {"delay_bucket": ">14d late", "mean": 1.72, "count": 1384}], "kpi": {"total_orders": 99441, "delivered_orders": 96478, "delivered_pct": 97.0, "total_revenue": 13591644.0, "avg_review": 4.07, "pct_5star": 57.4, "pct_1star": 11.9, "late_rate": 6.8, "avg_delivery_days": 12.1, "avg_review_late": 2.26, "avg_review_ontime": 4.28}, "state": [{"customer_state": "AL", "late_rate": 0.214, "avg_review": 3.826, "n": 397}, {"customer_state": "MA", "late_rate": 0.174, "avg_review": 3.813, "n": 717}, {"customer_state": "SE", "late_rate": 0.152, "avg_review": 3.899, "n": 335}, {"customer_state": "PI", "late_rate": 0.139, "avg_review": 3.979, "n": 476}, {"customer_state": "CE", "late_rate": 0.138, "avg_review": 3.937, "n": 1279}, {"customer_state": "BA", "late_rate": 0.122, "avg_review": 3.911, "n": 3256}, {"customer_state": "RJ", "late_rate": 0.121, "avg_review": 3.947, "n": 12350}, {"customer_state": "PA", "late_rate": 0.112, "avg_review": 3.89, "n": 946}, {"customer_state": "ES", "late_rate": 0.107, "avg_review": 4.047, "n": 1995}, {"customer_state": "PB", "late_rate": 0.104, "avg_review": 4.062, "n": 517}, {"customer_state": "TO", "late_rate": 0.099, "avg_review": 4.157, "n": 274}, {"customer_state": "MS", "late_rate": 0.097, "avg_review": 4.158, "n": 701}, {"customer_state": "PE", "late_rate": 0.096, "avg_review": 4.069, "n": 1593}, {"customer_state": "RN", "late_rate": 0.093, "avg_review": 4.131, "n": 474}, {"customer_state": "SC", "late_rate": 0.082, "avg_review": 4.117, "n": 3546}, {"customer_state": "GO", "late_rate": 0.065, "avg_review": 4.091, "n": 1957}, {"customer_state": "RS", "late_rate": 0.061, "avg_review": 4.18, "n": 5345}, {"customer_state": "MT", "late_rate": 0.06, "avg_review": 4.13, "n": 886}, {"customer_state": "DF", "late_rate": 0.057, "avg_review": 4.125, "n": 2080}, {"customer_state": "MG", "late_rate": 0.046, "avg_review": 4.179, "n": 11354}, {"customer_state": "SP", "late_rate": 0.045, "avg_review": 4.234, "n": 40501}, {"customer_state": "PR", "late_rate": 0.04, "avg_review": 4.229, "n": 4923}, {"customer_state": "AC", "late_rate": 0.038, "avg_review": 4.088, "n": 80}, {"customer_state": "AP", "late_rate": 0.03, "avg_review": 4.224, "n": 67}, {"customer_state": "RO", "late_rate": 0.029, "avg_review": 4.169, "n": 243}, {"customer_state": "AM", "late_rate": 0.028, "avg_review": 4.234, "n": 145}], "seller_state": [{"state": "SP", "pct": 59.7}, {"state": "PR", "pct": 11.3}, {"state": "MG", "pct": 7.9}, {"state": "SC", "pct": 6.1}, {"state": "RJ", "pct": 5.5}, {"state": "RS", "pct": 4.2}, {"state": "GO", "pct": 1.3}, {"state": "DF", "pct": 1.0}, {"state": "ES", "pct": 0.7}, {"state": "BA", "pct": 0.6}, {"state": "CE", "pct": 0.4}, {"state": "PE", "pct": 0.3}, {"state": "PB", "pct": 0.2}, {"state": "RN", "pct": 0.2}, {"state": "MS", "pct": 0.2}, {"state": "MT", "pct": 0.1}, {"state": "RO", "pct": 0.1}, {"state": "SE", "pct": 0.1}, {"state": "AC", "pct": 0.0}, {"state": "PI", "pct": 0.0}, {"state": "MA", "pct": 0.0}, {"state": "AM", "pct": 0.0}, {"state": "PA", "pct": 0.0}], "category": [{"product_category_name_english": "bed_bath_table", "n_orders": 9417, "avg_price": 93.3, "avg_review": 3.87, "late_rate": 0.07}, {"product_category_name_english": "health_beauty", "n_orders": 8836, "avg_price": 130.16, "avg_review": 4.12, "late_rate": 0.07}, {"product_category_name_english": "sports_leisure", "n_orders": 7720, "avg_price": 114.34, "avg_review": 4.09, "late_rate": 0.06}, {"product_category_name_english": "computers_accessories", "n_orders": 6689, "avg_price": 116.51, "avg_review": 3.92, "late_rate": 0.06}, {"product_category_name_english": "furniture_decor", "n_orders": 6449, "avg_price": 87.56, "avg_review": 3.89, "late_rate": 0.07}, {"product_category_name_english": "housewares", "n_orders": 5884, "avg_price": 90.79, "avg_review": 4.04, "late_rate": 0.05}, {"product_category_name_english": "watches_gifts", "n_orders": 5624, "avg_price": 201.14, "avg_review": 4.0, "late_rate": 0.07}, {"product_category_name_english": "telephony", "n_orders": 4199, "avg_price": 71.21, "avg_review": 3.93, "late_rate": 0.07}, {"product_category_name_english": "auto", "n_orders": 3897, "avg_price": 139.96, "avg_review": 4.04, "late_rate": 0.07}, {"product_category_name_english": "toys", "n_orders": 3886, "avg_price": 117.55, "avg_review": 4.14, "late_rate": 0.06}, {"product_category_name_english": "cool_stuff", "n_orders": 3632, "avg_price": 167.36, "avg_review": 4.13, "late_rate": 0.06}, {"product_category_name_english": "garden_tools", "n_orders": 3518, "avg_price": 111.63, "avg_review": 4.03, "late_rate": 0.06}, {"product_category_name_english": "perfumery", "n_orders": 3162, "avg_price": 116.74, "avg_review": 4.16, "late_rate": 0.06}, {"product_category_name_english": "baby", "n_orders": 2885, "avg_price": 134.34, "avg_review": 3.99, "late_rate": 0.07}, {"product_category_name_english": "electronics", "n_orders": 2550, "avg_price": 57.91, "avg_review": 4.02, "late_rate": 0.07}, {"product_category_name_english": "stationery", "n_orders": 2311, "avg_price": 91.75, "avg_review": 4.18, "late_rate": 0.07}, {"product_category_name_english": "fashion_bags_accessories", "n_orders": 1864, "avg_price": 75.25, "avg_review": 4.13, "late_rate": 0.05}, {"product_category_name_english": "pet_shop", "n_orders": 1710, "avg_price": 110.07, "avg_review": 4.18, "late_rate": 0.05}, {"product_category_name_english": "unknown", "n_orders": 1451, "avg_price": 112.0, "avg_review": 3.82, "late_rate": 0.07}, {"product_category_name_english": "office_furniture", "n_orders": 1273, "avg_price": 162.01, "avg_review": 3.48, "late_rate": 0.08}, {"product_category_name_english": "consoles_games", "n_orders": 1062, "avg_price": 138.49, "avg_review": 4.0, "late_rate": 0.06}, {"product_category_name_english": "luggage_accessories", "n_orders": 1034, "avg_price": 128.6, "avg_review": 4.31, "late_rate": 0.04}, {"product_category_name_english": "home_appliances", "n_orders": 764, "avg_price": 103.98, "avg_review": 4.15, "late_rate": 0.04}, {"product_category_name_english": "construction_tools_construction", "n_orders": 748, "avg_price": 155.73, "avg_review": 4.04, "late_rate": 0.06}, {"product_category_name_english": "small_appliances", "n_orders": 630, "avg_price": 280.78, "avg_review": 4.12, "late_rate": 0.04}, {"product_category_name_english": "musical_instruments", "n_orders": 628, "avg_price": 281.62, "avg_review": 4.14, "late_rate": 0.07}, {"product_category_name_english": "books_general_interest", "n_orders": 512, "avg_price": 84.73, "avg_review": 4.44, "late_rate": 0.06}, {"product_category_name_english": "home_construction", "n_orders": 490, "avg_price": 137.56, "avg_review": 3.93, "late_rate": 0.06}, {"product_category_name_english": "food", "n_orders": 450, "avg_price": 57.63, "avg_review": 4.15, "late_rate": 0.07}, {"product_category_name_english": "furniture_living_room", "n_orders": 422, "avg_price": 137.01, "avg_review": 3.88, "late_rate": 0.07}, {"product_category_name_english": "home_confort", "n_orders": 397, "avg_price": 134.96, "avg_review": 3.83, "late_rate": 0.09}, {"product_category_name_english": "audio", "n_orders": 350, "avg_price": 139.25, "avg_review": 3.82, "late_rate": 0.12}, {"product_category_name_english": "drinks", "n_orders": 297, "avg_price": 59.18, "avg_review": 3.99, "late_rate": 0.04}, {"product_category_name_english": "market_place", "n_orders": 280, "avg_price": 91.25, "avg_review": 4.0, "late_rate": 0.04}, {"product_category_name_english": "books_technical", "n_orders": 260, "avg_price": 71.52, "avg_review": 4.33, "late_rate": 0.08}, {"product_category_name_english": "air_conditioning", "n_orders": 253, "avg_price": 185.27, "avg_review": 3.92, "late_rate": 0.04}, {"product_category_name_english": "kitchen_dining_laundry_garden_furniture", "n_orders": 248, "avg_price": 164.87, "avg_review": 3.95, "late_rate": 0.04}, {"product_category_name_english": "construction_tools_lights", "n_orders": 244, "avg_price": 135.13, "avg_review": 3.97, "late_rate": 0.07}, {"product_category_name_english": "fashion_shoes", "n_orders": 240, "avg_price": 89.93, "avg_review": 4.19, "late_rate": 0.04}, {"product_category_name_english": "industry_commerce_and_business", "n_orders": 235, "avg_price": 148.02, "avg_review": 4.07, "late_rate": 0.06}, {"product_category_name_english": "home_appliances_2", "n_orders": 234, "avg_price": 476.12, "avg_review": 4.13, "late_rate": 0.06}, {"product_category_name_english": "food_drink", "n_orders": 227, "avg_price": 54.6, "avg_review": 4.3, "late_rate": 0.04}, {"product_category_name_english": "fixed_telephony", "n_orders": 217, "avg_price": 225.69, "avg_review": 3.67, "late_rate": 0.04}, {"product_category_name_english": "art", "n_orders": 202, "avg_price": 115.8, "avg_review": 3.92, "late_rate": 0.06}, {"product_category_name_english": "costruction_tools_garden", "n_orders": 194, "avg_price": 108.05, "avg_review": 4.05, "late_rate": 0.05}, {"product_category_name_english": "agro_industry_and_commerce", "n_orders": 182, "avg_price": 342.12, "avg_review": 4.0, "late_rate": 0.03}, {"product_category_name_english": "computers", "n_orders": 181, "avg_price": 1098.34, "avg_review": 4.14, "late_rate": 0.05}, {"product_category_name_english": "construction_tools_safety", "n_orders": 167, "avg_price": 208.99, "avg_review": 3.83, "late_rate": 0.03}, {"product_category_name_english": "signaling_and_security", "n_orders": 140, "avg_price": 108.09, "avg_review": 4.07, "late_rate": 0.04}, {"product_category_name_english": "christmas_supplies", "n_orders": 128, "avg_price": 57.52, "avg_review": 3.91, "late_rate": 0.1}, {"product_category_name_english": "fashion_underwear_beach", "n_orders": 121, "avg_price": 72.84, "avg_review": 3.95, "late_rate": 0.09}, {"product_category_name_english": "fashion_male_clothing", "n_orders": 112, "avg_price": 81.8, "avg_review": 3.62, "late_rate": 0.05}], "payment": [{"primary_payment_type": "boleto", "n": 19784, "avg_value": 145.03, "avg_installments": 1.0, "avg_review": 4.07}, {"primary_payment_type": "credit_card", "n": 74975, "avg_value": 167.29, "avg_installments": 3.55, "avg_review": 4.07}, {"primary_payment_type": "debit_card", "n": 1527, "avg_value": 142.72, "avg_installments": 1.0, "avg_review": 4.16}, {"primary_payment_type": "voucher", "n": 3151, "avg_value": 120.29, "avg_installments": 1.14, "avg_review": 3.98}], "installments": [{"max_installments": "(0, 1]", "item_price": 100.26}, {"max_installments": "(1, 3]", "item_price": 114.66}, {"max_installments": "(3, 6]", "item_price": 157.83}, {"max_installments": "(6, 12]", "item_price": 301.59}, {"max_installments": "(12, 24]", "item_price": 377.84}], "drivers": [{"feature": "Order delivered late", "coef": 0.612}, {"feature": "# items in order", "coef": 0.248}, {"feature": "# distinct sellers", "coef": 0.191}, {"feature": "Delay magnitude (days)", "coef": 0.181}, {"feature": "Cross-state shipment", "coef": 0.11}, {"feature": "Payment installments", "coef": 0.049}, {"feature": "Order item value (R$)", "coef": 0.034}, {"feature": "Freight/price ratio", "coef": 0.022}, {"feature": "Freight cost (R$)", "coef": 0.012}]};
+
+// ---------- Nav switching ----------
+document.querySelectorAll('.navlink').forEach(el=>{
+  el.addEventListener('click', ()=>{
+    document.querySelectorAll('.navlink').forEach(n=>n.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tab-'+el.dataset.tab).classList.add('active');
+  });
+});
+
+// ---------- Shared chart defaults ----------
+Chart.defaults.font.family = "'Inter',system-ui,sans-serif";
+Chart.defaults.font.size = 12;
+Chart.defaults.color = '#5B6B85';
+
+// ---------- ColorBrewer BuPu palette (design spec) ----------
+// Full 9-class ColorBrewer "BuPu" ramp, kept here for reference/documentation:
+//   #f7fcfd, #e0ecf4, #bfd3e6, #9ebcda, #8c96c6, #8c6bb1, #88419d, #810f7c, #4d004b
+// The first 3 stops (#f7fcfd, #e0ecf4, #bfd3e6) render as near-white on the
+// dashboard's white card backgrounds and make bars/slices disappear, so charts
+// only ever sample the 6 stops below — still a full BuPu gradient (light to
+// dark), just without the invisible end of the ramp.
+const BUPU_VISIBLE = ['#9ebcda','#8c96c6','#8c6bb1','#88419d','#810f7c','#4d004b'];
+const BUPU1 = '#8c6bb1', BUPU2 = '#88419d', BUPU3 = '#810f7c', BUPU_DARKEST = '#4d004b';
+const RDPU  = '#dd3497';   // reserved for headings elsewhere in the page
+const PURD  = '#c994c7';   // reserved for the index/nav
+
+function hexToRgb(hex){ const n=parseInt(hex.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function rgbToHex(r,g,b){ return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join(''); }
+// Smoothly interpolates across BUPU_VISIBLE. t in [0,1]; 0 = lightest (still
+// clearly visible), 1 = darkest. Used both for continuous gradients (shading
+// a bar by its value) and to space out N discrete category colors evenly.
+function bupuShade(t){
+  const stops = BUPU_VISIBLE;
+  const scaled = Math.min(1, Math.max(0, t)) * (stops.length - 1);
+  const i0 = Math.floor(scaled), i1 = Math.min(stops.length - 1, i0 + 1);
+  const f = scaled - i0;
+  const [r0,g0,b0] = hexToRgb(stops[i0]), [r1,g1,b1] = hexToRgb(stops[i1]);
+  return rgbToHex(r0+(r1-r0)*f, g0+(g1-g0)*f, b0+(b1-b0)*f);
+}
+// Evenly spaced set of N visible BuPu shades (for pies/doughnuts with N slices).
+function bupuSet(n){
+  return Array.from({length:n}, (_,i)=> bupuShade(n<=1 ? 0.5 : i/(n-1)));
+}
+const gridColor = '#EEF0F3';
+
+// ---------- Chart 1: Monthly trend (combo: bar + line) ----------
+new Chart(document.getElementById('chartMonthly'), {
+  data: {
+    labels: DATA.monthly.map(d=>d.order_month),
+    datasets: [
+      { type:'bar', label:'Orders', data: DATA.monthly.map(d=>d.orders), backgroundColor:BUPU1+'99', yAxisID:'y', borderRadius:2, order:2 },
+      { type:'line', label:'Avg review score', data: DATA.monthly.map(d=>d.avg_review), borderColor:BUPU3, backgroundColor:BUPU3, yAxisID:'y1', tension:.3, pointRadius:3, borderWidth:2, order:1 }
+    ]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    interaction:{mode:'index', intersect:false},
+    scales:{
+      x:{ grid:{display:false}, ticks:{maxRotation:90, minRotation:90, font:{size:10.5}} },
+      y:{ position:'left', title:{display:true,text:'Orders / month'}, grid:{color:gridColor} },
+      y1:{ position:'right', min:1, max:5, title:{display:true,text:'Avg review score'}, grid:{display:false} }
+    },
+    plugins:{ legend:{position:'top', align:'end', labels:{boxWidth:12}} }
+  }
+});
+
+// ---------- Chart 2: Delay bucket (vertical bar, ordered categories) ----------
+const delayOrder = ['>14d early','7-14d early','0-7d early','1-7d late','7-14d late','>14d late'];
+const delayMap = Object.fromEntries(DATA.delay_bucket.map(d=>[d.delay_bucket, d]));
+new Chart(document.getElementById('chartDelay'), {
+  type:'bar',
+  data:{
+    labels: delayOrder,
+    datasets:[{
+      label:'Avg review score',
+      data: delayOrder.map(k=> delayMap[k] ? delayMap[k].mean : null),
+      // shade darkens with how "late" the bucket is (lightest=most early/best, darkest=most late/worst)
+      backgroundColor: delayOrder.map((k,i)=> bupuShade(i/(delayOrder.length-1))),
+      borderRadius:4
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    scales:{ y:{min:0,max:5, grid:{color:gridColor}, title:{display:true,text:'Average review score'}}, x:{grid:{display:false}} },
+    plugins:{ legend:{display:false},
+      tooltip:{ callbacks:{ label:(ctx)=> `Avg review: ${ctx.parsed.y.toFixed(2)}  (n=${delayMap[ctx.label].count.toLocaleString()})` } }
+    }
+  }
+});
+
+// ---------- Chart 3: Late rate by state (horizontal bar - ranking many categories) ----------
+const stateTop = DATA.state.slice(0,12);
+new Chart(document.getElementById('chartStateLate'), {
+  type:'bar',
+  data:{
+    labels: stateTop.map(d=>d.customer_state),
+    datasets:[{ label:'Late rate', data: stateTop.map(d=>(d.late_rate*100).toFixed(1)), backgroundColor:BUPU3, borderRadius:3 }]
+  },
+  options:{
+    indexAxis:'y', responsive:true, maintainAspectRatio:false,
+    scales:{ x:{ title:{display:true,text:'Late delivery rate (%)'}, grid:{color:gridColor} }, y:{grid:{display:false}} },
+    plugins:{ legend:{display:false},
+      tooltip:{callbacks:{ label:(ctx)=> `${ctx.parsed.x}% late  (n=${stateTop[ctx.dataIndex].n.toLocaleString()}, avg review ${stateTop[ctx.dataIndex].avg_review.toFixed(2)})` }}
+    }
+  }
+});
+
+// ---------- Chart 4: Seller concentration (PIE - share of a whole, few slices) ----------
+const sellerTop = DATA.seller_state.slice(0,8);
+new Chart(document.getElementById('chartSellerState'), {
+  type:'pie',
+  data:{
+    labels: sellerTop.map(d=>d.state),
+    datasets:[{
+      label:'% of sellers',
+      data: sellerTop.map(d=>d.pct),
+      backgroundColor: bupuSet(sellerTop.length),
+      borderWidth:2, borderColor:'#fff'
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{position:'right', labels:{boxWidth:11, font:{size:11}}},
+      tooltip:{callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.parsed}% of sellers` }}
+    }
+  }
+});
+
+// ---------- Chart 5: Category review (horizontal bar - ranking many categories) ----------
+const catByVolume = [...DATA.category].sort((a,b)=>b.n_orders-a.n_orders).slice(0,15);
+const catSorted = [...catByVolume].sort((a,b)=>a.avg_review-b.avg_review);
+new Chart(document.getElementById('chartCategory'), {
+  type:'bar',
+  data:{
+    labels: catSorted.map(d=>d.product_category_name_english),
+    datasets:[{ label:'Avg review score', data: catSorted.map(d=>d.avg_review),
+      // darkest visible shade = below platform average, lightest visible shade = above average
+      backgroundColor: catSorted.map(d=> d.avg_review < 4.07 ? BUPU_DARKEST : BUPU1), borderRadius:3 }]
+  },
+  options:{
+    indexAxis:'y', responsive:true, maintainAspectRatio:false,
+    scales:{ x:{ min:3, max:5, title:{display:true,text:'Average review score'}, grid:{color:gridColor} }, y:{grid:{display:false}} },
+    plugins:{
+      legend:{display:false},
+      tooltip:{callbacks:{ label:(ctx)=> `Avg review: ${ctx.parsed.x.toFixed(2)}  (n=${catSorted[ctx.dataIndex].n_orders.toLocaleString()}, late rate ${(catSorted[ctx.dataIndex].late_rate*100).toFixed(1)}%)` }},
+      annotation: undefined
+    }
+  }
+});
+
+// ---------- Chart 6: Payment mix (DOUGHNUT - share of a whole) ----------
+const payFiltered = DATA.payment.filter(d=>d.primary_payment_type!=='not_defined');
+new Chart(document.getElementById('chartPayMix'), {
+  type:'doughnut',
+  data:{
+    labels: payFiltered.map(d=>d.primary_payment_type),
+    datasets:[{ data: payFiltered.map(d=>d.n), backgroundColor:bupuSet(payFiltered.length), borderWidth:2, borderColor:'#fff' }]
+  },
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'} } }
+});
+
+// ---------- Chart 7: Installments vs order value (LINE/AREA - ordered trend across bins) ----------
+new Chart(document.getElementById('chartInstallments'), {
+  type:'line',
+  data:{
+    labels: DATA.installments.map(d=>d.max_installments),
+    datasets:[{
+      label:'Avg order value (R$)', data: DATA.installments.map(d=>d.item_price),
+      borderColor:BUPU2, backgroundColor:BUPU1+'55', fill:true, tension:.25,
+      pointRadius:4, pointBackgroundColor:BUPU3, borderWidth:2
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    scales:{ y:{ title:{display:true,text:'Avg order value (R$)'}, grid:{color:gridColor} }, x:{ title:{display:true,text:'Installments'}, grid:{display:false} } },
+    plugins:{ legend:{display:false} }
+  }
+});
+
+// ---------- Payment table ----------
+const tbody = document.getElementById('payTableBody');
+payFiltered.forEach(d=>{
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${d.primary_payment_type}</td><td>${d.n.toLocaleString()}</td><td>R$${d.avg_value.toFixed(2)}</td><td>${d.avg_installments.toFixed(2)}</td><td>${d.avg_review.toFixed(2)}</td>`;
+  tbody.appendChild(tr);
+});
+
+// ---------- Chart 8: Driver ranking (horizontal bar, shade scaled by effect size) ----------
+const drivers = [...DATA.drivers].sort((a,b)=>a.coef-b.coef);
+const maxCoef = Math.max(...drivers.map(d=>d.coef));
+new Chart(document.getElementById('chartDrivers'), {
+  type:'bar',
+  data:{
+    labels: drivers.map(d=>d.feature),
+    datasets:[{ label:'Standardized coefficient', data: drivers.map(d=>d.coef),
+      backgroundColor: drivers.map(d=> bupuShade(d.coef/maxCoef)), borderRadius:3 }]
+  },
+  options:{
+    indexAxis:'y', responsive:true, maintainAspectRatio:false,
+    scales:{ x:{ title:{display:true,text:'Effect on P(low review ≤2★)'}, grid:{color:gridColor} }, y:{grid:{display:false}} },
+    plugins:{ legend:{display:false} }
+  }
+});
+</script>
+</body>
+</html>
